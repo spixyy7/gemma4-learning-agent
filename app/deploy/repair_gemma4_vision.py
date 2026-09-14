@@ -109,6 +109,8 @@ def main() -> None:
                 uploaded = ollama.post("/api/blobs/" + digest, content=iter(lambda: source.read(1024 * 1024), b""),
                     headers={"Content-Length": str(downloaded.stat().st_size)})
             uploaded.raise_for_status()
+            # Ollama now holds its own copy of the projector.
+            downloaded.unlink()
         # This alias is dedicated to this repair; leave the original tag intact.
         payload = {
             "model": VISION_MODEL,
@@ -139,7 +141,10 @@ def verify_vision(ollama: httpx.Client, cache: Path) -> None:
     import base64
 
     picture = Image.new("RGB", (480, 280), "white")
-    font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 160)
+    try:
+        font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 160)
+    except OSError:
+        font = ImageFont.load_default(size=160)
     ImageDraw.Draw(picture).text((240, 140), "17", fill="black", font=font, anchor="mm")
     encoded = BytesIO()
     picture.save(encoded, format="JPEG", quality=92)
@@ -148,7 +153,7 @@ def verify_vision(ollama: httpx.Client, cache: Path) -> None:
         "messages": [{"role": "user", "content": "Read the number printed in this image. Reply with that number only.",
                       "images": [base64.b64encode(encoded.getvalue()).decode("ascii")]}],
         "options": {"temperature": 0, "num_predict": 64},
-    })
+    }, timeout=900)  # The first load of the 10 GB model can be slow on CPU-only PCs.
     response.raise_for_status()
     answer = response.json().get("message", {}).get("content", "").strip()
     if answer.strip("*` .\n") != "17":

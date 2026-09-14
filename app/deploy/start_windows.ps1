@@ -875,6 +875,66 @@ function Install-LMStudioFromOfficialUrl {
     }
 }
 
+function Get-OllamaModelNames([string]$OllamaPath) {
+    $models = @(& $OllamaPath list 2>$null)
+    return @($models |
+        Select-Object -Skip 1 |
+        ForEach-Object { ($_ -split "\s+")[0] })
+}
+
+function Get-VerifiedVisionModel([string]$OllamaPath) {
+    $visionConfigPath = Join-Path $LogDir "vision-model.json"
+    if (-not (Test-Path -LiteralPath $visionConfigPath)) {
+        return $null
+    }
+
+    try {
+        $visionConfig = Get-Content -LiteralPath $visionConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        Write-Log "Ignoring unreadable local vision configuration."
+        return $null
+    }
+
+    if ($visionConfig.vision_verified -ne $true -or
+        $visionConfig.base_model -ne $OllamaModel -or
+        (Get-OllamaModelNames $OllamaPath) -notcontains $visionConfig.model) {
+        return $null
+    }
+    return [string]$visionConfig.model
+}
+
+function Ensure-VisionModel([string]$OllamaPath) {
+    $visionModel = Get-VerifiedVisionModel $OllamaPath
+    if ($visionModel) {
+        return $visionModel
+    }
+
+    # Ollama's bundled Gemma4 projector cannot read images on Windows. The repair
+    # builds a separate alias once and only records it after an image check passes.
+    Write-Log "Setting up Gemma4 image support (one-time; downloads about 534 MB)."
+    $repairExitCode = $null
+    try {
+        $repairExitCode = Invoke-ProcessWithProgress `
+            $VenvPython `
+            @((Join-Path $PSScriptRoot "repair_gemma4_vision.py")) `
+            $BackendDir `
+            "Setting up Gemma4 image support" `
+            7200
+    }
+    catch {
+        Write-Log $_.Exception.Message
+    }
+
+    if ($repairExitCode -eq 0) {
+        $visionModel = Get-VerifiedVisionModel $OllamaPath
+    }
+    if (-not $visionModel) {
+        Write-Host "[windows-native] Gemma4 image support could not be set up; see the output above. Text chat still works with $OllamaModel. Start the launcher again to retry." -ForegroundColor Yellow
+    }
+    return $visionModel
+}
+
 function Ensure-Ollama {
     if ($Mode -ne "ollama") {
         return $null
@@ -917,24 +977,7 @@ function Ensure-Ollama {
         Throw-DeploymentError "Ollama 模型名称不能为空。"
     }
 
-    $models = @(& $ollama list 2>$null)
-    $modelNames = @($models |
-        Select-Object -Skip 1 |
-        ForEach-Object { ($_ -split "\s+")[0] })
-    $visionConfigPath = Join-Path $LogDir "vision-model.json"
-    if (-not $OllamaModelWasSpecified -and $OllamaModel -eq "gemma4:e4b" -and (Test-Path -LiteralPath $visionConfigPath)) {
-        try {
-            $visionConfig = Get-Content -LiteralPath $visionConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($visionConfig.vision_verified -eq $true -and $visionConfig.base_model -eq $OllamaModel -and $modelNames -contains $visionConfig.model) {
-                $script:OllamaModel = [string]$visionConfig.model
-                Write-Log "Using the locally verified Gemma4 vision model: $OllamaModel"
-            }
-        }
-        catch {
-            Write-Log "Ignoring unreadable local vision configuration; using $OllamaModel."
-        }
-    }
-    $modelFound = $modelNames -contains $OllamaModel
+    $modelFound = (Get-OllamaModelNames $ollama) -contains $OllamaModel
     if (-not $modelFound) {
         Write-Log "本地没有模型 $OllamaModel，开始下载。"
         $pullExitCode = Invoke-ProcessWithProgress `
@@ -945,6 +988,14 @@ function Ensure-Ollama {
             7200
         if ($pullExitCode -ne 0) {
             Throw-DeploymentError "Ollama 模型下载失败：$OllamaModel，退出码：$pullExitCode"
+        }
+    }
+
+    if (-not $OllamaModelWasSpecified -and $OllamaModel -eq "gemma4:e4b") {
+        $visionModel = Ensure-VisionModel $ollama
+        if ($visionModel) {
+            $script:OllamaModel = $visionModel
+            Write-Log "Using the locally verified Gemma4 vision model: $OllamaModel"
         }
     }
 
