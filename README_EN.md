@@ -14,16 +14,16 @@ The Chinese deployment guide with every option is in
 - An internet connection for the first start
 - About 15 GB of free disk space (the model alone is about 10 GB)
 - 16 GB of RAM or more is recommended, because the model runs locally
-- `winget` (Windows App Installer) so the launcher can install Python and Java
-  for you. Without it, install Python 3.12 and JDK 17 manually first.
+- `winget` (Windows App Installer) so the launcher can install Java for you.
+  Without it, install JDK 17 manually first. Python 3.12 is installed with
+  winget too, or downloaded from python.org when winget is missing or fails.
 
 ## 1. Get the code
 
-This is a private repository, so you must be signed in to a GitHub account that
-has access.
+The Windows version lives on the `windows-deploy` branch.
 
 ```powershell
-git clone https://github.com/spixyy7/gemma4-learning-agent.git
+git clone -b windows-deploy https://github.com/byfrc/gemma4-learning-agent.git
 cd gemma4-learning-agent
 ```
 
